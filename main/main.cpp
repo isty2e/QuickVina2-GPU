@@ -455,8 +455,8 @@ Thank you!\n";
 ############################################################################\n\
 # If you used QuickVina2-GPU in your work, please cite:                    #\n\
 #                                                                          #\n\
-# Wang Lingyue, Shidi£¬Tang, Huang Qinqin,                                 #\n\
-# Hu Haifeng, Wu Jiansheng£¬and Zhu Yanxiang,.                             #\n\
+# Wang Lingyue, Shidiï¿½ï¿½Tang, Huang Qinqin,                                 #\n\
+# Hu Haifeng, Wu Jianshengï¿½ï¿½and Zhu Yanxiang,.                             #\n\
 # Fast, Accurate, and Reliable Molecular Docking with QuickVina 2,         #\n\
 # Bioinformatics (2015), doi: 10.1093/bioinformatics/btv082                #\n\
 # Accelerating Quick Vina2 with GPUs. ChemRxiv (2021).Print.               #\n\
@@ -475,6 +475,7 @@ Thank you!\n";
 		fl energy_range = 2.0;
 		int search_depth = 0; // 20210811 Glinttsd
 		int thread = 0;
+		std::string ligand_directory, output_directory;
 
 		// -0.035579, -0.005156, 0.840245, -0.035069, -0.587439, 0.05846
 		fl weight_gauss1      = -0.035579;
@@ -492,6 +493,8 @@ Thank you!\n";
 			("receptor", value<std::string>(&rigid_name), "rigid part of the receptor (PDBQT)")
 			("flex", value<std::string>(&flex_name), "flexible side chains, if any (PDBQT)")
 			("ligand", value<std::string>(&ligand_name), "ligand (PDBQT)")
+			("ligand_directory", value<std::string>(&ligand_directory), "ligand directory, if virtual screening is needed") // 20220303 Glinttsd
+			("output_directory", value<std::string>(&output_directory), "output directory, if virtual screening is needed") // 20220314 Glinttsd
 		;
 		//options_description search_area("Search area (required, except with --score_only)");
 		options_description search_area("Search space (required)");
@@ -596,8 +599,8 @@ Thank you!\n";
 				return 1;
 			}
 		}
-		if(vm.count("ligand") <= 0) {
-			std::cerr << "Missing ligand.\n" << "\nCorrect usage:\n" << desc_simple << '\n';
+		if (vm.count("ligand") > 0 && vm.count("ligand_directory") == 1) {
+			std::cerr << "Can not define ligand and ligand_directory at the same time\n";
 			return 1;
 		}
 		if(cpu < 1) 
@@ -640,6 +643,25 @@ Thank you!\n";
 
 		if(search_box_needed && size_x * size_y * size_z > 27e3) {
 			log << "WARNING: The search space volume > 27000 Angstrom^3 (See FAQ)\n";
+		}
+
+		if (vm.count("ligand") <= 0 && vm.count("ligand_directory") == 1) {
+			std::cout << "Using virtual sreening mode\n\n";
+		}
+
+		if (vm.count("ligand") <= 0 && vm.count("ligand_directory") <= 0) {
+			std::cerr << "Missing ligand\n";
+			return 1;
+		}
+
+		if (vm.count("ligand") > 0 && vm.count("ligand_directory") <= 0) {
+			std::cout << "Using single ligand docking mode\n\n";
+			if (output_produced) { // FIXME
+				if (!vm.count("out")) {
+					out_name = default_output(ligand_name);
+					std::cout << "Output will be " << out_name << '\n';
+				}
+			}
 		}
 
 		if(output_produced) { // FIXME
@@ -687,6 +709,36 @@ Thank you!\n";
 			cpu = 1;
 		if(verbosity > 1 && exhaustiveness < cpu)
 			log << "WARNING: at low exhaustiveness, it may be impossible to utilize all CPUs\n";
+
+		std::vector<std::vector<std::string>> ligand_names;
+		std::vector<std::string> out_names;
+		
+		if (vm.count("ligand_directory") == 1) {
+			std::string out_dir;
+			if (vm.count("output_directory") == 1)
+				out_dir = output_directory;
+			else
+				out_dir = ligand_directory + "_out";
+
+			std::experimental::filesystem::create_directory(out_dir);
+			for (const auto& entry : std::experimental::filesystem::directory_iterator(ligand_directory)) {
+				std::vector<std::string> tmp = { entry.path().string() };
+				ligand_names.push_back(tmp);
+				std::string delimiter1 = ".pdbqt";
+				std::string delimiter2 = ligand_directory;
+				std::string tmp2 = entry.path().string();
+				std::string tmp3 = tmp2.substr(0, tmp2.find(delimiter1)) + "_out.pdbqt";
+				std::string tmp4 = out_dir + tmp3.substr(ligand_directory.length(), tmp3.length());
+				out_names.push_back(tmp4);
+			}
+			std::cout << "Output will be in the directory " << out_dir << std::endl;
+		}
+		else {
+			std::vector<std::string> tmp = { ligand_name };
+			ligand_names.push_back(tmp);
+			std::vector<std::string> tmp2 = { out_name };
+			out_names.push_back(out_name);
+		}
 
 		doing(verbosity, "Reading input", log);
 
